@@ -1,58 +1,31 @@
-import numpy as np
 import pandas as pd
+import numpy as np
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score, classification_report
+from sklearn.datasets import load_iris
 
-# Load the Iris dataset
-iris_data = pd.read_csv('iris.csv')
+iris = load_iris()
+X = iris.data
+y = iris.target
 
-# Splitting features and labels
-X = iris_data.drop('species', axis=1)
-y = iris_data['species']
+X = np.array([pd.qcut(x, q=4, labels=False, duplicates='drop') for x in X.T]).T
 
-# Splitting the dataset into training and testing sets
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-def calculate_prior_probabilities(y):
-    total_samples = len(y)
-    unique_classes, class_counts = np.unique(y, return_counts=True)
-    prior_probabilities = {}
-    for i, cls in enumerate(unique_classes):
-        prior_probabilities[cls] = class_counts[i] / total_samples
-    return prior_probabilities
+prior_probs = np.bincount(y_train) / len(y_train)
 
-def calculate_likelihood_categorical(X_train, y_train):
-    unique_classes = np.unique(y_train)
-    likelihood_probabilities = {}
-    for cls in unique_classes:
-        X_cls = X_train[y_train == cls]
-        likelihood_probabilities[cls] = (X_cls.sum(axis=0) + 1) / (X_cls.shape[0] + 2) # Laplace smoothing
-    return likelihood_probabilities
+likelihood_probs = {}
+for class_ in np.unique(y_train):
+    likelihood_probs[class_] = [(pd.Series(X_train[y_train==class_, i]).value_counts() / len(X_train[y_train==class_, i])) for i in range(X_train.shape[1])]
 
-def predict_categorical(X_test, prior_probabilities, likelihood_probabilities):
-    predictions = []
-    for _, row in X_test.iterrows():
-        class_probabilities = {}
-        for cls, prior in prior_probabilities.items():
-            likelihood = 1
-            for feature, value in row.iteritems():
-                likelihood *= likelihood_probabilities[cls][feature] if value == 1 else (1 - likelihood_probabilities[cls][feature])
-            class_probabilities[cls] = prior * likelihood
-        predictions.append(max(class_probabilities, key=class_probabilities.get))
-    return np.array(predictions)
+def predict(X):
+    posteriors = np.zeros((X.shape[0], len(np.unique(y_train))))
+    for class_ in np.unique(y_train):
+        for i in range(X.shape[1]):
+            posteriors[:, class_] += np.log(likelihood_probs[class_][i].get(X[:, i], 1e-6))
+        posteriors[:, class_] += np.log(prior_probs[class_])
+    return np.argmax(posteriors, axis=1)
 
-# Calculate prior probabilities
-prior_probabilities = calculate_prior_probabilities(y_train)
+y_pred = predict(X_test)
 
-# Calculate likelihood probabilities
-likelihood_probabilities = calculate_likelihood_categorical(X_train, y_train)
-
-# Make predictions
-predictions = predict_categorical(X_test, prior_probabilities, likelihood_probabilities)
-
-# Evaluate the model
-accuracy = accuracy_score(y_test, predictions)
-print("Accuracy:", accuracy)
-
-print("\nClassification Report:")
-print(classification_report(y_test, predictions))
+accuracy = np.mean(y_pred == y_test)
+print(f'Accuracy: {accuracy}')
